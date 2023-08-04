@@ -1,0 +1,25 @@
+{
+    "json": {
+        "strValue": "this is a string, $FOO",
+        "numberValue": 37.4,
+        "arrayValue": [
+            1,
+            2,
+            3
+        ],
+        "objectValue": {
+            "field1": 1,
+            "field2": "2"
+        },
+        "objectArrayValue": [
+            {
+                "value": 1,
+                "other": "bla"
+            },
+            {
+                "value": 2,
+                "other": "blabla"
+            }
+        ]
+    }
+}

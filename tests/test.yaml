@@ -1,0 +1,41 @@
+requests:
+  - name: echo
+    uri: https://postman-echo.com/post
+    method: POST
+    queryParams:
+      foo: bar
+      bp: true
+      np: 1
+      fp: 1.1
+      baz:
+        - 1
+        - 2
+    headers:
+      X-AWESOME: "some value; 123"
+      Content-Type: application/json
+    body:
+      content: |
+        {
+          "strValue": "this is a string, $FOO",
+          "numberValue": 37.4,
+          "arrayValue": [1,2,3],
+          "objectValue": {
+            "field1": 1,
+            "field2": "2"
+          },
+          "objectArrayValue": [
+            { "value": 1, "other": "bla"},
+            { "value": 2, "other": "blabla" }
+          ]
+        }
+    extractors:
+      theString: $.json.strValue
+      theNumber: $.json.numberValue
+      theArray: $.json.arrayValue
+      theObject: $.json.objectValue.field1
+      theArrayObject: "$.json.objectArrayValue[1].value"
+  - name: echo2
+    uri: https://postman-echo.com/get
+    method: GET
+    queryParams:
+      foo: $theString
