@@ -21,8 +21,8 @@ test-log = "0.2"
 
 [package.metadata.cross.target.aarch64-apple-darwin]
 xargo = false
-image = "aarch64-apple-darwin-cross"
+image = "freeznet/aarch64-apple-darwin-cross:11.3.1"
 
 [package.metadata.cross.target.x86_64-apple-darwin]
 xargo = false
-image = "x86_64-apple-darwin-cross"
+image = "freeznet/x86_64-apple-darwin-cross:11.3.1"
