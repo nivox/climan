@@ -409,6 +409,7 @@ dependencies = [
  "jsonpath",
  "log",
  "reqwest",
+ "schemars",
  "serde",
  "serde_json",
  "serde_yaml",
@@ -532,6 +533,12 @@ name = "dotenv"
 version = "0.15.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "77c90badedccf4105eca100756a0b1289e191f6fcbdadd3cee1d2f614f97da8f"
+
+[[package]]
+name = "dyn-clone"
+version = "1.0.12"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "304e6508efa593091e97a9abbc10f90aa7ca635b6d2784feff3c89d41dd12272"
 
 [[package]]
 name = "either"
@@ -1606,6 +1613,30 @@ dependencies = [
 ]
 
 [[package]]
+name = "schemars"
+version = "0.8.12"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "02c613288622e5f0c3fdc5dbd4db1c5fbe752746b1d1a56a0630b78fd00de44f"
+dependencies = [
+ "dyn-clone",
+ "schemars_derive",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
+name = "schemars_derive"
+version = "0.8.12"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "109da1e6b197438deb6db99952990c7f959572794b80ff93707d55a232545e7c"
+dependencies = [
+ "proc-macro2",
+ "quote 1.0.29",
+ "serde_derive_internals",
+ "syn 1.0.109",
+]
+
+[[package]]
 name = "scopeguard"
 version = "1.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1652,6 +1683,17 @@ dependencies = [
  "proc-macro2",
  "quote 1.0.29",
  "syn 2.0.23",
+]
+
+[[package]]
+name = "serde_derive_internals"
+version = "0.26.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "85bf8229e7920a9f636479437026331ce11aa132b4dde37d121944a44d6e5f3c"
+dependencies = [
+ "proc-macro2",
+ "quote 1.0.29",
+ "syn 1.0.109",
 ]
 
 [[package]]

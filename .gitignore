@@ -1,3 +1,4 @@
 /target
 .climan.log
 .env
+.vscode/settings.json

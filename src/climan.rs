@@ -1,11 +1,12 @@
 use jsonpath::Selector;
 use log::debug;
 use reqwest::{Client, RequestBuilder};
+use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use simplelog::{error, info};
 use std::{collections::HashMap, fs, str::FromStr};
 
-#[derive(Serialize, Deserialize, Debug)]
+#[derive(Serialize, Deserialize, Debug, JsonSchema)]
 enum Method {
     #[serde(alias = "get")]
     GET,
@@ -21,7 +22,7 @@ enum Method {
     HEAD,
 }
 
-#[derive(Serialize, Deserialize, Debug)]
+#[derive(Serialize, Deserialize, Debug, JsonSchema)]
 #[serde(untagged)]
 enum ParamValue {
     StringParam(String),
@@ -30,7 +31,7 @@ enum ParamValue {
     ListParam(Vec<serde_json::Value>),
 }
 
-#[derive(Serialize, Deserialize, Debug)]
+#[derive(Serialize, Deserialize, Debug, JsonSchema)]
 #[serde(untagged)]
 enum Body {
     File { file: String },
@@ -53,7 +54,7 @@ impl Body {
     }
 }
 
-#[derive(Serialize, Deserialize, Debug)]
+#[derive(Serialize, Deserialize, Debug, JsonSchema)]
 #[serde(tag = "type")]
 pub enum Authentication {
     #[serde(rename = "basic")]
@@ -66,7 +67,7 @@ pub enum Authentication {
     Bearer { token: String },
 }
 
-#[derive(Serialize, Deserialize, Debug)]
+#[derive(Serialize, Deserialize, Debug, JsonSchema)]
 struct Request {
     name: String,
     uri: String,
@@ -79,7 +80,7 @@ struct Request {
     extractors: Option<HashMap<String, String>>,
 }
 
-#[derive(Serialize, Deserialize, Debug)]
+#[derive(Serialize, Deserialize, Debug, JsonSchema)]
 pub struct ApiSpec {
     requests: Vec<Request>,
 }

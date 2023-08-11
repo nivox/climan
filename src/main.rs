@@ -6,6 +6,7 @@ use clap::Parser;
 use climan::{execute_spec, ApiSpec};
 use dotenv::dotenv;
 use log::{error, LevelFilter};
+use schemars::schema_for;
 use simplelog::{
     ColorChoice, CombinedLogger, Config, SharedLogger, TermLogger, TerminalMode, WriteLogger,
 };
@@ -15,7 +16,7 @@ use simplelog::{
 struct Args {
     // if no #[arg] directive is specified the argument is treated as positional
     // so we expect the spec path to be the first argument
-    /// the path to a YAML specification
+    /// the path to a YAML specification or 'schema' to print the JSON Schema of climan
     spec: String,
 
     /// additional variables to set in the format: FOO=BAR,
@@ -73,20 +74,29 @@ async fn main() -> anyhow::Result<ExitCode> {
 
     CombinedLogger::init(loggers).expect("unable to setup logging");
 
-    let content = std::fs::read_to_string(&args.spec)?;
-    let api_spec: ApiSpec = serde_yaml::from_str(&content)?;
+    match args.spec.as_str() {
+        "schema" => {
+            let schema = schema_for!(ApiSpec);
+            println!("{}", serde_json::to_string_pretty(&schema).unwrap());
+            Ok(ExitCode::SUCCESS)
+        }
+        path => {
+            let content = std::fs::read_to_string(path)?;
+            let api_spec: ApiSpec = serde_yaml::from_str(&content)?;
 
-    let mut all_vars = args.parse_variables();
-    for (key, value) in env::vars() {
-        all_vars.insert(key, Some(value));
-    }
+            let mut all_vars = args.parse_variables();
+            for (key, value) in env::vars() {
+                all_vars.insert(key, Some(value));
+            }
 
-    let result = execute_spec(api_spec, all_vars).await?;
+            let result = execute_spec(api_spec, all_vars).await?;
 
-    if result.last_error.is_some() {
-        log::error!("could not execute API spec, error: {:?}", result.last_error);
-        Ok(ExitCode::FAILURE)
-    } else {
-        Ok(ExitCode::SUCCESS)
+            if result.last_error.is_some() {
+                log::error!("could not execute API spec, error: {:?}", result.last_error);
+                Ok(ExitCode::FAILURE)
+            } else {
+                Ok(ExitCode::SUCCESS)
+            }
+        }
     }
 }

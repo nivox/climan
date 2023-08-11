@@ -1,0 +1,191 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "ApiSpec",
+  "type": "object",
+  "required": [
+    "requests"
+  ],
+  "properties": {
+    "requests": {
+      "type": "array",
+      "items": {
+        "$ref": "#/definitions/Request"
+      }
+    }
+  },
+  "definitions": {
+    "Authentication": {
+      "oneOf": [
+        {
+          "type": "object",
+          "required": [
+            "type",
+            "username"
+          ],
+          "properties": {
+            "password": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "type": {
+              "type": "string",
+              "enum": [
+                "basic"
+              ]
+            },
+            "username": {
+              "type": "string"
+            }
+          }
+        },
+        {
+          "type": "object",
+          "required": [
+            "token",
+            "type"
+          ],
+          "properties": {
+            "token": {
+              "type": "string"
+            },
+            "type": {
+              "type": "string",
+              "enum": [
+                "bearer"
+              ]
+            }
+          }
+        }
+      ]
+    },
+    "Body": {
+      "anyOf": [
+        {
+          "type": "object",
+          "required": [
+            "file"
+          ],
+          "properties": {
+            "file": {
+              "type": "string"
+            }
+          }
+        },
+        {
+          "type": "object",
+          "required": [
+            "content"
+          ],
+          "properties": {
+            "content": {
+              "type": "string"
+            },
+            "trim": {
+              "type": [
+                "boolean",
+                "null"
+              ]
+            }
+          }
+        }
+      ]
+    },
+    "Method": {
+      "type": "string",
+      "enum": [
+        "GET",
+        "POST",
+        "PUT",
+        "DELETE",
+        "PATCH",
+        "HEAD"
+      ]
+    },
+    "ParamValue": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "number",
+          "format": "float"
+        },
+        {
+          "type": "boolean"
+        },
+        {
+          "type": "array",
+          "items": true
+        }
+      ]
+    },
+    "Request": {
+      "type": "object",
+      "required": [
+        "method",
+        "name",
+        "uri"
+      ],
+      "properties": {
+        "authentication": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/Authentication"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "body": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/Body"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "extractors": {
+          "type": [
+            "object",
+            "null"
+          ],
+          "additionalProperties": {
+            "type": "string"
+          }
+        },
+        "headers": {
+          "type": [
+            "object",
+            "null"
+          ],
+          "additionalProperties": {
+            "type": "string"
+          }
+        },
+        "method": {
+          "$ref": "#/definitions/Method"
+        },
+        "name": {
+          "type": "string"
+        },
+        "queryParams": {
+          "type": [
+            "object",
+            "null"
+          ],
+          "additionalProperties": {
+            "$ref": "#/definitions/ParamValue"
+          }
+        },
+        "uri": {
+          "type": "string"
+        }
+      }
+    }
+  }
+}
