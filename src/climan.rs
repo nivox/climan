@@ -1,4 +1,5 @@
 use jsonpath::Selector;
+use log::debug;
 use reqwest::{Client, RequestBuilder};
 use serde::{Deserialize, Serialize};
 use simplelog::{error, info};
@@ -33,16 +34,36 @@ enum ParamValue {
 #[serde(untagged)]
 enum Body {
     File { file: String },
-    Content { content: String },
+    Content { content: String, trim: Option<bool> },
 }
 
 impl Body {
     fn content(&self) -> Vec<u8> {
         match self {
             Body::File { file } => fs::read(file).unwrap(),
-            Body::Content { content } => content.as_bytes().to_vec(),
+            Body::Content { content, trim } => {
+                let value = if trim.unwrap_or(false) {
+                    content.trim()
+                } else {
+                    content
+                };
+                value.as_bytes().to_vec()
+            }
         }
     }
+}
+
+#[derive(Serialize, Deserialize, Debug)]
+#[serde(tag = "type")]
+pub enum Authentication {
+    #[serde(rename = "basic")]
+    Basic {
+        username: String,
+        password: Option<String>,
+    },
+
+    #[serde(rename = "bearer")]
+    Bearer { token: String },
 }
 
 #[derive(Serialize, Deserialize, Debug)]
@@ -54,6 +75,7 @@ struct Request {
     query_params: Option<HashMap<String, ParamValue>>,
     headers: Option<HashMap<String, String>>,
     body: Option<Body>,
+    authentication: Option<Authentication>,
     extractors: Option<HashMap<String, String>>,
 }
 
@@ -90,13 +112,15 @@ fn replace_variables(string_value: &str, variables: &HashMap<String, Option<Stri
 
 impl Request {
     fn request(&self, context: &ApiSpecExecutionContext) -> anyhow::Result<RequestBuilder> {
+        let uri = replace_variables(&self.uri, &context.variables);
+
         let base = match &self.method {
-            Method::GET => context.client.get(&self.uri),
-            Method::POST => context.client.post(&self.uri),
-            Method::PUT => context.client.put(&self.uri),
-            Method::DELETE => context.client.delete(&self.uri),
-            Method::PATCH => context.client.patch(&self.uri),
-            Method::HEAD => context.client.head(&self.uri),
+            Method::GET => context.client.get(&uri),
+            Method::POST => context.client.post(&uri),
+            Method::PUT => context.client.put(&uri),
+            Method::DELETE => context.client.delete(&uri),
+            Method::PATCH => context.client.patch(&uri),
+            Method::HEAD => context.client.head(&uri),
         };
 
         let request = if let Some(query_params) = &self.query_params {
@@ -157,6 +181,22 @@ impl Request {
             request
         };
 
+        let request = if let Some(authentication) = &self.authentication {
+            match authentication {
+                Authentication::Basic { username, password } => request.basic_auth(
+                    replace_variables(&username, &context.variables),
+                    password
+                        .clone()
+                        .map(|value| replace_variables(&value, &context.variables)),
+                ),
+                Authentication::Bearer { token } => {
+                    request.bearer_auth(replace_variables(&token, &context.variables))
+                }
+            }
+        } else {
+            request
+        };
+
         Ok(request)
     }
 }
@@ -183,7 +223,7 @@ async fn execute_request(
         _ => None,
     };
 
-    let extracted_variables: HashMap<String, Option<String>> = match json_value {
+    let extracted_variables: HashMap<String, Option<String>> = match json_value.as_ref() {
         Some(json) => {
             let mut extracted_vals: HashMap<String, Option<String>> = HashMap::new();
             if let Some(extractors) = request.extractors {
@@ -213,12 +253,17 @@ async fn execute_request(
         "green"
     };
 
+    let body_formatted = match json_value.as_ref() {
+        Some(json) => serde_json::to_string_pretty(json)?,
+        None => body_string,
+    };
+
     info!(
         "===\nExecuted Request <blue>{}</>\n* Status: <{}>{}</>\n* Headers: <bright-magenta>{:?}</>\n* Body:\n<magenta>{}</>\n* Extracted Values: {:?}",
-        request.name, status_color, status, headers, body_string, extracted_variables
+        request.name, status_color, status, headers, body_formatted, extracted_variables
     );
 
-    let mut current_variables = context.variables.clone();
+    let mut current_variables: HashMap<String, Option<String>> = context.variables.clone();
     current_variables.extend(extracted_variables);
 
     Ok(ApiSpecExecutionContext::new(
@@ -236,7 +281,7 @@ pub async fn execute_spec(
     api_spec: ApiSpec,
     initial_variables: HashMap<String, Option<String>>,
 ) -> anyhow::Result<ExecutionResult> {
-    info!("executing api_spec: {:?}", api_spec);
+    debug!("executing api_spec: {:?}", api_spec);
     let client = reqwest::Client::new();
     let mut context: ApiSpecExecutionContext =
         ApiSpecExecutionContext::new(client, initial_variables);

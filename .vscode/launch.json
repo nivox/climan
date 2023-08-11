@@ -20,8 +20,7 @@
                 }
             },
             "args": [
-                "--spec",
-                "test.yaml",
+                "tests/test.yaml",
                 "--variables",
                 "FOO=BAR"
             ],
