@@ -1,6 +1,6 @@
 [package]
 name = "climan"
-version = "0.2.0"
+version = "0.3.0"
 edition = "2021"
 
 [dependencies]
@@ -19,6 +19,7 @@ simplelog = { version = "0.12", features = ["paris"] }
 test-log = "0.2"
 dotenv = "0.15"
 schemars = "0.8"
+strum = { version = "0.25", features = ["derive"] }
 
 [package.metadata.cross.target.aarch64-apple-darwin]
 xargo = false

@@ -1,12 +1,12 @@
 use jsonpath::Selector;
 use log::debug;
-use reqwest::{Client, RequestBuilder};
+use reqwest::{header::HeaderMap, Client, RequestBuilder, StatusCode};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use simplelog::{error, info};
 use std::{collections::HashMap, fs, str::FromStr};
 
-#[derive(Serialize, Deserialize, Debug, JsonSchema)]
+#[derive(Serialize, Deserialize, Debug, JsonSchema, strum::Display, Clone)]
 enum Method {
     #[serde(alias = "get")]
     GET,
@@ -22,7 +22,7 @@ enum Method {
     HEAD,
 }
 
-#[derive(Serialize, Deserialize, Debug, JsonSchema)]
+#[derive(Serialize, Deserialize, Debug, JsonSchema, Clone)]
 #[serde(untagged)]
 enum ParamValue {
     StringParam(String),
@@ -31,7 +31,7 @@ enum ParamValue {
     ListParam(Vec<serde_json::Value>),
 }
 
-#[derive(Serialize, Deserialize, Debug, JsonSchema)]
+#[derive(Serialize, Deserialize, Debug, JsonSchema, Clone)]
 #[serde(untagged)]
 enum Body {
     File { file: String },
@@ -54,7 +54,7 @@ impl Body {
     }
 }
 
-#[derive(Serialize, Deserialize, Debug, JsonSchema)]
+#[derive(Serialize, Deserialize, Debug, JsonSchema, Clone)]
 #[serde(tag = "type")]
 pub enum Authentication {
     #[serde(rename = "basic")]
@@ -67,7 +67,7 @@ pub enum Authentication {
     Bearer { token: String },
 }
 
-#[derive(Serialize, Deserialize, Debug, JsonSchema)]
+#[derive(Serialize, Deserialize, Debug, JsonSchema, Clone)]
 struct Request {
     name: String,
     uri: String,
@@ -85,7 +85,7 @@ pub struct ApiSpec {
     requests: Vec<Request>,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct ApiSpecExecutionContext {
     pub variables: HashMap<String, Option<String>>,
     client: Client,
@@ -112,16 +112,18 @@ fn replace_variables(string_value: &str, variables: &HashMap<String, Option<Stri
 }
 
 impl Request {
-    fn request(&self, context: &ApiSpecExecutionContext) -> anyhow::Result<RequestBuilder> {
-        let uri = replace_variables(&self.uri, &context.variables);
+    fn final_uri(&self, context: &ApiSpecExecutionContext) -> String {
+        replace_variables(&self.uri, &context.variables)
+    }
 
+    fn request(&self, context: &ApiSpecExecutionContext) -> anyhow::Result<RequestBuilder> {
         let base = match &self.method {
-            Method::GET => context.client.get(&uri),
-            Method::POST => context.client.post(&uri),
-            Method::PUT => context.client.put(&uri),
-            Method::DELETE => context.client.delete(&uri),
-            Method::PATCH => context.client.patch(&uri),
-            Method::HEAD => context.client.head(&uri),
+            Method::GET => context.client.get(self.final_uri(context)),
+            Method::POST => context.client.post(self.final_uri(context)),
+            Method::PUT => context.client.put(self.final_uri(context)),
+            Method::DELETE => context.client.delete(self.final_uri(context)),
+            Method::PATCH => context.client.patch(self.final_uri(context)),
+            Method::HEAD => context.client.head(self.final_uri(context)),
         };
 
         let request = if let Some(query_params) = &self.query_params {
@@ -206,17 +208,19 @@ async fn execute_request(
     request: Request,
     context: &ApiSpecExecutionContext,
 ) -> anyhow::Result<ApiSpecExecutionContext> {
-    let res = request.request(&context)?.send().await?;
+    let http_request = request.request(&context)?.build()?;
+    let res = context.client.execute(http_request).await?;
     let status = res.status();
     let headers = res.headers().clone();
 
     let body_string = res.text().await?;
 
-    let json_value = match headers.get("content-type") {
-        Some(json)
-            if json
+    let json_value: Option<serde_json::Value> = match headers.get("content-type") {
+        Some(json_content_type)
+            if json_content_type
                 .to_str()
                 .expect("header should be a string")
+                .to_lowercase()
                 .starts_with("application/json") =>
         {
             Some(serde_json::from_str(&body_string)?)
@@ -227,7 +231,7 @@ async fn execute_request(
     let extracted_variables: HashMap<String, Option<String>> = match json_value.as_ref() {
         Some(json) => {
             let mut extracted_vals: HashMap<String, Option<String>> = HashMap::new();
-            if let Some(extractors) = request.extractors {
+            if let Some(extractors) = request.extractors.clone() {
                 for (k, v) in extractors {
                     let s = Selector::new(&v).expect(&format!("Invalid jsonpath for {}", &k));
                     let v = s
@@ -246,6 +250,34 @@ async fn execute_request(
         None => HashMap::new(),
     };
 
+    print_response(
+        request.final_uri(context),
+        status,
+        json_value,
+        body_string,
+        request,
+        headers,
+        extracted_variables.clone(),
+    )?;
+
+    let mut current_variables: HashMap<String, Option<String>> = context.variables.clone();
+    current_variables.extend(extracted_variables);
+
+    Ok(ApiSpecExecutionContext::new(
+        context.client.clone(),
+        current_variables,
+    ))
+}
+
+fn print_response(
+    final_uri: String,
+    status: StatusCode,
+    json_value: Option<serde_json::Value>,
+    body_string: String,
+    request: Request,
+    headers: HeaderMap,
+    extracted_variables: HashMap<String, Option<String>>,
+) -> anyhow::Result<()> {
     let status_color = if status.is_client_error() || status.is_server_error() {
         "red"
     } else if status.is_redirection() || status.is_informational() {
@@ -259,18 +291,40 @@ async fn execute_request(
         None => body_string,
     };
 
+    let mut headers_string = String::new();
+    for header in headers {
+        match header {
+            (name, value) => {
+                let name_string = name
+                    .map(|name| name.as_str().to_string())
+                    .unwrap_or("default".into());
+                let with_value = format!("{} : {}\n", name_string, value.to_str()?.to_string());
+                headers_string.push_str(&with_value)
+            }
+        }
+    }
+
+    let mut variables_string = String::new();
+
+    if extracted_variables.is_empty() {
+        variables_string.push_str("")
+    } else {
+        for variable in extracted_variables {
+            match variable {
+                (name, value) => variables_string.push_str(&format!(
+                    "\n  {} : {}",
+                    name,
+                    value.unwrap_or("".into())
+                )),
+            }
+        }
+    }
+
     info!(
-        "===\nExecuted Request <blue>{}</>\n* Status: <{}>{}</>\n* Headers: <bright-magenta>{:?}</>\n* Body:\n<magenta>{}</>\n* Extracted Values: {:?}",
-        request.name, status_color, status, headers, body_formatted, extracted_variables
+        "---\nExecuted Request <blue>{}</>\n<white>{} {}</>\n<{}>{}</>\n---\n<bright-magenta>{}</>\n---\n<magenta>{}</>\n---\nExtracted Values:\n<cyan>[{}\n]</>",
+        request.name, request.method, final_uri, status_color, status, headers_string, body_formatted, variables_string
     );
-
-    let mut current_variables: HashMap<String, Option<String>> = context.variables.clone();
-    current_variables.extend(extracted_variables);
-
-    Ok(ApiSpecExecutionContext::new(
-        context.client.clone(),
-        current_variables,
-    ))
+    Ok(())
 }
 
 pub struct ExecutionResult {
