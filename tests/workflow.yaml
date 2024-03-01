@@ -1,3 +1,4 @@
+name: TestWorkflow
 requests:
   - name: echo
     uri: https://postman-echo.com/post

@@ -7,16 +7,18 @@ a cool cli http thingy
 ### Usage
 
 ```shell
-climan [OPTIONS] <SPEC>
+Usage: climan [OPTIONS] <COMMAND>
 
-Arguments:
-  <SPEC>  the path to a YAML specification or 'schema' to print the JSON Schema of climan
+Commands:
+  workflow  Executes a workflow
+  request   Executes a single request
+  schema    Prints the schema for the workflow
+  help      Print this message or the help of the given subcommand(s)
 
 Options:
-  -v, --variables <VARIABLES>  additional variables to set in the format: FOO=BAR, note that you can also set variables with .env file, the current environmant variables are already available without this option
-  -l, --log <LOG>              set this to log the output into the .climan.log file in the current folder [possible values: true, false]
-  -h, --help                   Print help
-  -V, --version                Print version
+  -l, --log <LOG>  set this to log the output into the .climan.log file in the current folder [possible values: true, false]
+  -h, --help       Print help
+  -V, --version    Print version
 ```
 
 #### Editing
