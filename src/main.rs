@@ -88,14 +88,14 @@ fn on_request(skin: MadSkin, request: &Request, context: &RequestContext) {
         context
             .headers
             .borrow()
-            .into_iter()
+            .iter()
             .map(|(k, v)| (k.as_str(), v.as_str())),
     );
 
     skin.print_text("* **Body:**");
     let body_template = TextTemplate::from("```\n${body}\n```");
     let mut body_expander = body_template.expander();
-    let body_content = context.body.as_ref().map(|s| s.as_str()).unwrap_or("");
+    let body_content = context.body.as_deref().unwrap_or("");
     body_expander.set_lines("body", body_content);
     skin.print_expander(body_expander);
     println!();
@@ -136,7 +136,7 @@ fn on_response(skin: MadSkin, _request: &Request, _context: &RequestContext, res
         response
             .headers
             .borrow()
-            .into_iter()
+            .iter()
             .map(|(k, v)| (k.as_str(), v.as_str())),
     );
 
