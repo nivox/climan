@@ -4,7 +4,7 @@ use schemars::schema_for;
 
 use std::borrow::Borrow;
 use std::{collections::HashMap, env, fs::File, process::ExitCode};
-use termimad::minimad::{self, mad_inline, TextTemplate};
+use termimad::minimad::{TextTemplate};
 use termimad::MadSkin;
 
 mod climan;
