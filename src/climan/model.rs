@@ -4,16 +4,22 @@ use serde::{Deserialize, Serialize};
 #[derive(Serialize, Deserialize, Debug, JsonSchema, strum::Display, Clone)]
 pub enum Method {
     #[serde(alias = "get")]
+    #[serde(alias = "GET")]
     Get,
     #[serde(alias = "post")]
+    #[serde(alias = "POST")]
     Post,
     #[serde(alias = "put")]
+    #[serde(alias = "PUT")]
     Put,
     #[serde(alias = "delete")]
+    #[serde(alias = "DELETE")]
     Delete,
     #[serde(alias = "patch")]
+    #[serde(alias = "PATCH")]
     Patch,
     #[serde(alias = "head")]
+    #[serde(alias = "HEAD")]
     Head,
 }
 
