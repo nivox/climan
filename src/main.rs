@@ -1,94 +1,155 @@
-use std::{collections::HashMap, env, fs::File, process::ExitCode};
-
-mod climan;
-
 use clap::{Parser, Subcommand};
-use climan::request::{Request, RequestContext, Response};
-use dotenv::dotenv;
 use log::{error, LevelFilter};
 use schemars::schema_for;
-use simplelog::{
-    ColorChoice, CombinedLogger, Config, SharedLogger, TermLogger, TerminalMode, WriteLogger,
-};
 
-use crate::climan::workflow::Workflow;
+use std::borrow::Borrow;
+use std::{collections::HashMap, env, fs::File, process::ExitCode};
+use termimad::minimad::{self, mad_inline, TextTemplate};
+use termimad::MadSkin;
 
-fn on_request(request: &Request, context: &RequestContext) {
-    println!(
-        "Executing request {}, with variables:\n{}",
-        request.name,
-        serde_json::to_string_pretty(context.variables).unwrap_or("err".to_string())
+mod climan;
+use climan::request::{Request, RequestContext, Response};
+use climan::workflow::Workflow;
+
+fn print_header_table<'v, T: IntoIterator<Item = (&'v str, &'v str)>>(
+    skin: &MadSkin,
+    header_map: T,
+) {
+    let template = TextTemplate::from(
+        r#"
+    | :-: | :-: |
+    | **Header** | **Value** |
+    | :- | :- |
+    ${rows
+    | *${name}* | ${value} |
+    }
+    | - | - |
+    "#,
     );
-}
 
-fn on_response(_request: &Request, _context: &RequestContext, response: &Response) {
-    println!(
-        "Response status: {}\nHeaders:\n{}\nExtracted variables:\n{}\nBody:\n{}",
-        response.status_code,
-        serde_json::to_string_pretty(&response.headers).unwrap_or("err".to_string()),
-        serde_json::to_string_pretty(&response.extracted_variables).unwrap_or("err".to_string()),
-        response.body
-    );
-}
-
-/*
-fn print_response(
-    final_uri: String,
-    status: StatusCode,
-    json_value: Option<serde_json::Value>,
-    body_string: String,
-    request: Request,
-    headers: HeaderMap,
-    extracted_variables: HashMap<String, Option<String>>,
-) -> anyhow::Result<()> {
-    let status_color = if status.is_client_error() || status.is_server_error() {
-        "red"
-    } else if status.is_redirection() || status.is_informational() {
-        "yellow"
-    } else {
-        "green"
-    };
-
-    let body_formatted = match json_value.as_ref() {
-        Some(json) => serde_json::to_string_pretty(json)?,
-        None => body_string,
-    };
-
-    let mut headers_string = String::new();
-    for header in headers {
-        match header {
-            (name, value) => {
-                let name_string = name
-                    .map(|name| name.as_str().to_string())
-                    .unwrap_or("default".into());
-                let with_value = format!("{} : {}\n", name_string, value.to_str()?.to_string());
-                headers_string.push_str(&with_value)
-            }
-        }
+    let mut expander = template.expander();
+    for (name, value) in header_map {
+        expander.sub("rows").set("name", name).set("value", value);
     }
 
-    let mut variables_string = String::new();
+    skin.print_expander(expander);
+}
 
-    if extracted_variables.is_empty() {
-        variables_string.push_str("")
-    } else {
-        for variable in extracted_variables {
-            match variable {
-                (name, value) => variables_string.push_str(&format!(
-                    "\n  {} : {}",
-                    name,
-                    value.unwrap_or("".into())
-                )),
-            }
-        }
+fn print_variable_table(skin: &MadSkin, variables: &HashMap<String, Option<String>>) {
+    let template = TextTemplate::from(
+        r#"
+    | :-: | :-: |
+    | **Variable** | **Value** |
+    | :- | :- |
+    ${rows
+    | *${name}* | ${value} |
+    }
+    | - | - |
+    "#,
+    );
+
+    let mut expander = template.expander();
+    for (name, value) in variables {
+        let value = value.as_ref().map(|v| v.as_str()).unwrap_or("");
+        expander.sub("rows").set("name", name).set("value", value);
     }
 
-    info!(
-        "---\nExecuted Request <blue>{}</>\n<white>{} {}</>\n<{}>{}</>\n---\n<bright-magenta>{}</>\n---\n<magenta>{}</>\n---\nExtracted Values:\n<cyan>[{}\n]</>",
-        request.name, request.method, final_uri, status_color, status, headers_string, body_formatted, variables_string
+    skin.print_expander(expander);
+}
+
+fn on_request(skin: MadSkin, request: &Request, context: &RequestContext) {
+    let step_template = TextTemplate::from("# 📗 Executing step: ${name}");
+    let mut step_expander = step_template.expander();
+    step_expander.set("name", &request.name);
+
+    skin.print_expander(step_expander);
+
+    skin.print_text("* **Variables:**");
+    print_variable_table(&skin, context.variables);
+    println!();
+
+    let template = TextTemplate::from(
+        r#"
+## 📤 Request properties
+* **Method**: ${method}
+* **URL**: ${url}"#,
     );
-    Ok(())
-}*/
+    let mut expander = template.expander();
+    let method_name = context.method.to_string();
+    expander
+        .set("name", &request.name)
+        .set("method", &method_name)
+        .set("url", &context.uri);
+    skin.print_expander(expander);
+
+    skin.print_text("* **Headers:**");
+    print_header_table(
+        &skin,
+        context
+            .headers
+            .borrow()
+            .into_iter()
+            .map(|(k, v)| (k.as_str(), v.as_str())),
+    );
+
+    skin.print_text("* **Body:**");
+    let body_template = TextTemplate::from("```\n${body}\n```");
+    let mut body_expander = body_template.expander();
+    let body_content = context.body.as_ref().map(|s| s.as_str()).unwrap_or("");
+    body_expander.set_lines("body", body_content);
+    skin.print_expander(body_expander);
+    println!();
+}
+
+fn on_response(skin: MadSkin, _request: &Request, _context: &RequestContext, response: &Response) {
+    let template = TextTemplate::from(
+        r#"
+## 📥 Response properties
+* **Status**: ${status_color} ${status_code}
+* **Time to Headers:** ${time_to_headers}ms
+* **Time total:** ${time_total}ms"#,
+    );
+    let mut expander = template.expander();
+
+    let status_color = match response.status_code {
+        200..=299 => "🟢",
+        300..=399 => "🟠",
+        400..=499 => "🔴",
+        500..=599 => "🔥",
+        _ => "",
+    };
+    let status_code = response.status_code.to_string();
+    let time_to_headers = response.time_to_headers.as_millis().to_string();
+    let time_total = response.time_total.as_millis().to_string();
+
+    expander
+        .set("status_color", status_color)
+        .set("status_code", &status_code)
+        .set("time_to_headers", &time_to_headers)
+        .set("time_total", &time_total);
+
+    skin.print_expander(expander);
+
+    skin.print_text("* **Headers:**");
+    print_header_table(
+        &skin,
+        response
+            .headers
+            .borrow()
+            .into_iter()
+            .map(|(k, v)| (k.as_str(), v.as_str())),
+    );
+
+    skin.print_text("* **Extracted variables:**");
+    print_variable_table(&skin, &response.extracted_variables);
+
+    skin.print_text("* **Body:**");
+    let body_template = TextTemplate::from("```\n${body}\n```");
+    let mut body_expander = body_template.expander();
+    body_expander.set_lines("body", &response.body);
+    skin.print_expander(body_expander);
+    println!();
+}
 
 #[derive(Parser, Debug)]
 #[command(version, about, long_about = None)]
@@ -98,7 +159,10 @@ struct Cli {
 
     /// set this to log the output into the .climan.log file in the current folder
     #[arg(short, long)]
-    log: Option<bool>,
+    log_file: Option<bool>,
+
+    /// set the log verbosity level: 0=off, 1=error, 2=warn, 3=info, 4=debug, 5=trace (default: 2)
+    log_level: Option<u8>,
 }
 
 #[derive(Subcommand, Debug)]
@@ -116,7 +180,7 @@ enum Command {
         #[arg(short, long)]
         env: bool,
     },
-    
+
     /// Executes a single request
     Request {
         /// Path to the request file
@@ -151,29 +215,53 @@ fn parse_variables(variables: Vec<String>) -> HashMap<String, Option<String>> {
         .collect()
 }
 
+fn init_variables(variables: Option<Vec<String>>, env: bool) -> HashMap<String, Option<String>> {
+    let mut all_vars = variables.map_or(HashMap::new(), parse_variables);
+    if env {
+        for (key, value) in env::vars() {
+            all_vars.insert(key, Some(value));
+        }
+    }
+    all_vars
+}
+
 #[tokio::main]
 async fn main() -> anyhow::Result<ExitCode> {
-    dotenv().ok();
-
     let cli = Cli::parse();
 
-    let mut loggers: Vec<Box<dyn SharedLogger>> = vec![TermLogger::new(
-        LevelFilter::Info,
-        Config::default(),
-        TerminalMode::Mixed,
-        ColorChoice::Auto,
-    )];
-
-    if cli.log.unwrap_or(false) {
-        let writer_logger = WriteLogger::new(
-            LevelFilter::Info,
-            Config::default(),
-            File::create(".climan.log").unwrap(),
-        );
-        loggers.append(&mut vec![writer_logger])
+    let log_level = match cli.log_level.unwrap_or(2) {
+        0 => LevelFilter::Off,
+        1 => LevelFilter::Error,
+        2 => LevelFilter::Warn,
+        3 => LevelFilter::Info,
+        4 => LevelFilter::Debug,
+        5 => LevelFilter::Trace,
+        _ => LevelFilter::Warn,
     };
 
-    CombinedLogger::init(loggers).expect("unable to setup logging");
+    let mut loggers: Vec<Box<dyn simplelog::SharedLogger>> = vec![simplelog::TermLogger::new(
+        log_level,
+        simplelog::Config::default(),
+        simplelog::TerminalMode::Mixed,
+        simplelog::ColorChoice::Auto,
+    )];
+
+    if cli.log_file.unwrap_or(false) {
+        loggers.push(simplelog::WriteLogger::new(
+            log_level,
+            simplelog::Config::default(),
+            File::create(".climan.log").unwrap(),
+        ));
+    };
+
+    simplelog::CombinedLogger::init(loggers).expect("unable to setup logging");
+
+    let skin: MadSkin = serde_yaml::from_str(include_str!("../assets/skin.yaml"))?;
+    let skinned_on_request =
+        |request: &Request, context: &RequestContext| on_request(skin.clone(), request, context);
+    let skinned_on_response = |request: &Request, context: &RequestContext, response: &Response| {
+        on_response(skin.clone(), request, context, response)
+    };
 
     match cli.command {
         Command::Workflow {
@@ -184,26 +272,28 @@ async fn main() -> anyhow::Result<ExitCode> {
             let content = std::fs::read_to_string(path)?;
             let workflow: Workflow = serde_yaml::from_str(&content)?;
 
-            let mut all_vars = variables.map_or(HashMap::new(), parse_variables);
-            if env {
-                for (key, value) in env::vars() {
-                    all_vars.insert(key, Some(value));
-                }
-            }
-
+            let all_vars = init_variables(variables, env);
             let client = reqwest::Client::new();
+
+            let workflow_template = TextTemplate::from("# 🚀 Executing workflow: ${name}");
+            let mut workflow_expander = workflow_template.expander();
+            workflow_expander.set("name", &workflow.name);
+
+            skin.print_expander(workflow_expander);
             let result = workflow
-                .execute(&client, all_vars, on_request, on_response)
+                .execute(&client, all_vars, &skinned_on_request, &skinned_on_response)
                 .await;
 
             if result.is_err() {
-                let error = result.unwrap_err();
-                log::error!("could not execute workflow, error: {:?}", error);
+                log::error!(
+                    "could not execute workflow, error: {:?}",
+                    result.unwrap_err()
+                );
                 Ok(ExitCode::FAILURE)
             } else {
                 Ok(ExitCode::SUCCESS)
             }
-        },
+        }
         Command::Request {
             path,
             variables,
@@ -212,30 +302,29 @@ async fn main() -> anyhow::Result<ExitCode> {
             let content = std::fs::read_to_string(path)?;
             let request: Request = serde_yaml::from_str(&content)?;
 
-            let mut all_vars = variables.map_or(HashMap::new(), parse_variables);
-            if env {
-                for (key, value) in env::vars() {
-                    all_vars.insert(key, Some(value));
-                }
-            }
+            let all_vars = init_variables(variables, env);
 
             let client = reqwest::Client::new();
-            let context = RequestContext::new(&all_vars); 
-            on_request(&request, &context);
             let result = request
-                .execute(&client, &context)
+                .execute(
+                    &client,
+                    &all_vars,
+                    &skinned_on_request,
+                    &skinned_on_response,
+                )
                 .await;
 
             if result.is_err() {
-                let error = result.unwrap_err();
-                log::error!("could not execute workflow, error: {:?}", error);
+                log::error!(
+                    "could not execute request, error: {:?}",
+                    result.unwrap_err()
+                );
                 Ok(ExitCode::FAILURE)
             } else {
-                on_response(&request, &context, &result.unwrap());
                 Ok(ExitCode::SUCCESS)
             }
-        },
-        
+        }
+
         Command::Schema => {
             let schema = schema_for!(Workflow);
             println!("{}", serde_json::to_string_pretty(&schema).unwrap());

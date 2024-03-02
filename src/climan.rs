@@ -35,7 +35,7 @@ mod tests {
         let client = reqwest::Client::new();
         let workflow: Workflow = serde_yaml::from_str(&test_spec)?;
         let result = workflow
-            .execute(&client, HashMap::new(), |_, _| (), |_, _, _| ())
+            .execute(&client, HashMap::new(), &|_, _| (), &|_, _, _| ())
             .await;
 
         assert!(result.is_ok());

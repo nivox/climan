@@ -19,10 +19,6 @@ impl WorkflowContext {
         }
     }
 
-    fn as_request_context(&self) -> RequestContext {
-        RequestContext::new(&self.variables)
-    }
-
     fn update<T: IntoIterator<Item = (String, Option<String>)>>(&mut self, variables: T) {
         self.variables.extend(variables);
     }
@@ -36,7 +32,7 @@ pub struct WorkflowResult {
 
 #[derive(Serialize, Deserialize, Debug, JsonSchema)]
 pub struct Workflow {
-    name: String,
+    pub name: String,
     requests: Vec<Request>,
 }
 
@@ -45,8 +41,8 @@ impl Workflow {
         &self,
         client: &Client,
         variables: T,
-        request_action: fn(&Request, &RequestContext) -> (),
-        response_action: fn(&Request, &RequestContext, &Response) -> (),
+        request_action: &impl Fn(&Request, &RequestContext),
+        response_action: &impl Fn(&Request, &RequestContext, &Response),
     ) -> anyhow::Result<WorkflowResult> {
         debug!("executing workflow: {:?}", self.name);
 
@@ -55,13 +51,8 @@ impl Workflow {
 
         for request in &self.requests {
             debug!("executing request: {:?}", request);
-            let request_context = context.as_request_context();
 
-            request_action(request, &request_context);
-
-            let response = request.execute(client, &request_context).await?;
-
-            response_action(request, &request_context, &response);
+            let response = request.execute(client, &context.variables, request_action, response_action).await?;
 
             context.update(response.extracted_variables.clone());
             responses.push(response);

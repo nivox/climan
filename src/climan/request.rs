@@ -1,6 +1,6 @@
-use std::{collections::HashMap, str::FromStr};
+use std::{collections::HashMap, str::FromStr, time::Duration, borrow::Borrow};
 
-use reqwest::{Client, RequestBuilder};
+use reqwest::{Client};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
@@ -21,11 +21,11 @@ pub struct Request {
 
 pub struct RequestContext<'v> {
     pub variables: &'v HashMap<String, Option<String>>,
-}
-impl RequestContext<'_> {
-    pub fn new(variables: &HashMap<String, Option<String>>) -> RequestContext {
-        RequestContext { variables }
-    }
+    pub uri: String,
+    pub method: Method,
+    pub query_params: HashMap<&'v String, String>,
+    pub headers: HashMap<&'v String, String>,
+    pub body: Option<String>,
 }
 
 fn replace_variables(string_value: &str, variables: &HashMap<String, Option<String>>) -> String {
@@ -41,26 +41,28 @@ fn replace_variables(string_value: &str, variables: &HashMap<String, Option<Stri
 
 #[derive(Debug)]
 pub struct Response {
-    pub uri: String,
     pub status_code: u16,
+    pub time_to_headers: Duration,
+    pub time_total: Duration,
     pub headers: HashMap<String, String>,
     pub body: String,
     pub extracted_variables: HashMap<String, Option<String>>,
 }
 
 impl Request {
-    fn final_uri(&self, context: &RequestContext) -> String {
-        replace_variables(&self.uri, context.variables)
-    }
-
     pub async fn execute<'v>(
         &self,
         client: &Client,
-        context: &RequestContext<'v>,
+        variables: &'v HashMap<String, Option<String>>,
+        request_action: impl Fn(&Request, &RequestContext),
+        response_action: impl Fn(&Request, &RequestContext, &Response),
     ) -> anyhow::Result<Response> {
-        let http_request = self.request(client, context)?.build()?;
-        let uri = http_request.url().to_string();
+        let (ctx, http_request) = self.request(client, variables)?;
+
+        request_action(self, &ctx);
+        let start_ts = std::time::Instant::now();
         let res = client.execute(http_request).await?;
+        let headers_ts = std::time::Instant::now();
 
         let status = res.status().as_u16();
         let headers = res
@@ -82,6 +84,8 @@ impl Request {
             .unwrap_or(false);
 
         let body_string = res.text().await?;
+        let end_ts = std::time::Instant::now();
+
         let json_value: Option<serde_json::Value> = if is_json {
             Some(serde_json::from_str(&body_string)?)
         } else {
@@ -93,13 +97,19 @@ impl Request {
             None => HashMap::new(),
         };
 
+        let time_to_headers = headers_ts.duration_since(start_ts);
+        let time_to_end = end_ts.duration_since(start_ts);
+
         let response = Response {
-            uri,
             status_code: status,
+            time_to_headers,
+            time_total: time_to_end,
             headers,
             body: body_string,
             extracted_variables,
         };
+        
+        response_action(self, &ctx, &response);
 
         Ok(response)
     }
@@ -126,90 +136,106 @@ impl Request {
         }
     }
 
-    fn request(&self, client: &Client, context: &RequestContext) -> anyhow::Result<RequestBuilder> {
-        let base = match &self.method {
-            Method::Get => client.get(self.final_uri(context)),
-            Method::Post => client.post(self.final_uri(context)),
-            Method::Put => client.put(self.final_uri(context)),
-            Method::Delete => client.delete(self.final_uri(context)),
-            Method::Patch => client.patch(self.final_uri(context)),
-            Method::Head => client.head(self.final_uri(context)),
+    fn request<'v>(&'v self, client: &Client, variables: &'v HashMap<String, Option<String>>) -> anyhow::Result<(RequestContext<'v>, reqwest::Request)> {
+        let final_uri = replace_variables(&self.uri, variables);
+
+        let mut request_builder = match &self.method {
+            Method::Get => client.get(&final_uri),
+            Method::Post => client.post(&final_uri),
+            Method::Put => client.put(&final_uri),
+            Method::Delete => client.delete(&final_uri),
+            Method::Patch => client.patch(&final_uri),
+            Method::Head => client.head(&final_uri),
         };
 
-        let request = if let Some(query_params) = &self.query_params {
-            let params: Vec<(String, String)> = query_params
+        let final_query_params = if let Some(query_params) = &self.query_params {
+            let params: Vec<(&String, String)> = query_params
                 .iter()
                 .flat_map(|(k, vs)| match vs {
                     ParamValue::StringParam(v) => {
-                        vec![(k.to_string(), replace_variables(v, context.variables))]
+                        vec![(k, replace_variables(v, variables))]
                     }
                     ParamValue::NumberParam(v) => {
                         vec![(
-                            k.to_string(),
-                            replace_variables(&v.to_string(), context.variables),
+                            k,
+                            replace_variables(&v.to_string(), variables),
                         )]
                     }
                     ParamValue::BoolParam(v) => vec![(
-                        k.to_string(),
-                        replace_variables(&v.to_string(), context.variables),
+                        k,
+                        replace_variables(&v.to_string(), variables),
                     )],
                     ParamValue::ListParam(vs) => vs
                         .iter()
                         .map(|v| {
                             (
-                                k.to_string(),
-                                replace_variables(&v.to_string(), context.variables),
+                                k,
+                                replace_variables(&v.to_string(), variables),
                             )
                         })
                         .collect(),
                 })
                 .collect();
 
-            base.query(&params)
+            HashMap::from_iter(params)
         } else {
-            base
-        };
+            HashMap::new()
+        }; 
+        request_builder = request_builder.query(&final_query_params);
+        
+        let final_headers = if let Some(headers) = &self.headers {
+            let header_it =  headers.iter().map(|(k, v)| {
+                (
+                    k,
+                    replace_variables(v, variables)
+                )
+            });
 
-        let request = if let Some(headers) = &self.headers {
-            let mut hm = reqwest::header::HeaderMap::new();
-
-            for (k, v) in headers {
-                hm.insert(
-                    reqwest::header::HeaderName::from_str(k)?,
-                    reqwest::header::HeaderValue::from_str(&replace_variables(
-                        v,
-                        context.variables,
-                    ))?,
-                );
-            }
-            request.headers(hm)
+            HashMap::from_iter(header_it)
         } else {
-            request
+            HashMap::new()
         };
-
-        let request = if let Some(body) = &self.body {
+        request_builder = request_builder.headers(reqwest::header::HeaderMap::from_iter(final_headers.iter().map(|(k, v)| {
+            (
+                reqwest::header::HeaderName::from_str(k).unwrap(),
+                reqwest::header::HeaderValue::from_str(v).unwrap()
+            )
+        })));
+        
+        let final_body = self.body.as_ref().map(|body| {
             let body_string = String::from_utf8_lossy(&body.content()).to_string();
-            request.body(replace_variables(&body_string, context.variables))
-        } else {
-            request
-        };
+            replace_variables(&body_string, variables)
+        });
 
-        let request = if let Some(authentication) = &self.authentication {
+        if let Some(body) = final_body.borrow() {
+            request_builder = request_builder.body(body.clone());
+        }
+
+        if let Some(authentication) = &self.authentication {
             match authentication {
-                Authentication::Basic { username, password } => request.basic_auth(
-                    replace_variables(username, context.variables),
+                Authentication::Basic { username, password } => 
+                    request_builder = request_builder.basic_auth(
+                    replace_variables(username, variables),
                     password
                         .clone()
-                        .map(|value| replace_variables(&value, context.variables)),
+                        .map(|value| replace_variables(&value, variables)),
                 ),
                 Authentication::Bearer { token } => {
-                    request.bearer_auth(replace_variables(token, context.variables))
+                    request_builder = request_builder.bearer_auth(replace_variables(token, variables))
                 }
             }
-        } else {
-            request
         };
+        
+        let request_context: RequestContext<'v> = RequestContext {
+            variables,
+            uri: final_uri,
+            method: self.method.clone(),
+            query_params: final_query_params,
+            headers: final_headers,
+            body: final_body,
+        };
+        
 
-        Ok(request)
+        Ok((request_context, request_builder.build()?))
     }
 }
