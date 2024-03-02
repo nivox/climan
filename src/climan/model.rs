@@ -4,21 +4,22 @@ use serde::{Deserialize, Serialize};
 #[derive(Serialize, Deserialize, Debug, JsonSchema, strum::Display, Clone)]
 pub enum Method {
     #[serde(alias = "get")]
-    GET,
+    Get,
     #[serde(alias = "post")]
-    POST,
+    Post,
     #[serde(alias = "put")]
-    PUT,
+    Put,
     #[serde(alias = "delete")]
-    DELETE,
+    Delete,
     #[serde(alias = "patch")]
-    PATCH,
+    Patch,
     #[serde(alias = "head")]
-    HEAD,
+    Head,
 }
 
 #[derive(Serialize, Deserialize, Debug, JsonSchema, Clone)]
 #[serde(untagged)]
+#[allow(clippy::enum_variant_names)]
 pub enum ParamValue {
     StringParam(String),
     NumberParam(f32),

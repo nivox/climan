@@ -13,7 +13,7 @@ use simplelog::{
 
 use crate::climan::workflow::Workflow;
 
-fn on_request(request: &Request, context: &RequestContext) -> () {
+fn on_request(request: &Request, context: &RequestContext) {
     println!(
         "Executing request {}, with variables:\n{}",
         request.name,
@@ -21,7 +21,7 @@ fn on_request(request: &Request, context: &RequestContext) -> () {
     );
 }
 
-fn on_response(_request: &Request, _context: &RequestContext, response: &Response) -> () {
+fn on_response(_request: &Request, _context: &RequestContext, response: &Response) {
     println!(
         "Response status: {}\nHeaders:\n{}\nExtracted variables:\n{}\nBody:\n{}",
         response.status_code,
@@ -139,8 +139,8 @@ fn parse_variables(variables: Vec<String>) -> HashMap<String, Option<String>> {
     variables
         .into_iter()
         .flat_map(|variable_spec| {
-            let split: Vec<&str> = variable_spec.split("=").into_iter().collect();
-            match (split.first(), split.iter().nth(1)) {
+            let split: Vec<&str> = variable_spec.split('=').collect();
+            match (split.first(), split.get(1)) {
                 (Some(name), Some(value)) => vec![(name.to_string(), Some(value.to_string()))],
                 (name, value) => {
                     error!("invalid variable spec: {:?}, {:?}", name, value);

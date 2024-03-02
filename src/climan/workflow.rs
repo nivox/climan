@@ -23,7 +23,7 @@ impl WorkflowContext {
         RequestContext::new(&self.variables)
     }
 
-    fn update<T: IntoIterator<Item = (String, Option<String>)>>(&mut self, variables: T) -> () {
+    fn update<T: IntoIterator<Item = (String, Option<String>)>>(&mut self, variables: T) {
         self.variables.extend(variables);
     }
 }

@@ -23,7 +23,7 @@ pub struct RequestContext<'v> {
     pub variables: &'v HashMap<String, Option<String>>,
 }
 impl RequestContext<'_> {
-    pub fn new<'v>(variables: &'v HashMap<String, Option<String>>) -> RequestContext {
+    pub fn new(variables: &HashMap<String, Option<String>>) -> RequestContext {
         RequestContext { variables }
     }
 }
@@ -31,10 +31,10 @@ impl RequestContext<'_> {
 fn replace_variables(string_value: &str, variables: &HashMap<String, Option<String>>) -> String {
     let result: String =
         variables
-            .into_iter()
+            .iter()
             .fold(string_value.to_string(), |acc, (key, value)| match value {
-                Some(value) => acc.replace(&format!("${}", key), &value),
-                None => acc.to_string(),
+                Some(value) => acc.replace(&format!("${}", key), value),
+                None => acc,
             });
     result
 }
@@ -50,7 +50,7 @@ pub struct Response {
 
 impl Request {
     fn final_uri(&self, context: &RequestContext) -> String {
-        replace_variables(&self.uri, &context.variables)
+        replace_variables(&self.uri, context.variables)
     }
 
     pub async fn execute<'v>(
@@ -94,11 +94,11 @@ impl Request {
         };
 
         let response = Response {
-            uri: uri,
+            uri,
             status_code: status,
-            headers: headers,
+            headers,
             body: body_string,
-            extracted_variables: extracted_variables.clone(),
+            extracted_variables,
         };
 
         Ok(response)
@@ -108,10 +108,10 @@ impl Request {
         if let Some(extractors) = &self.extractors {
             let mut extracted_vals: HashMap<String, Option<String>> = HashMap::new();
             for (name, path) in extractors {
-                let s = jsonpath::Selector::new(&path)
-                    .expect(&format!("Invalid jsonpath for {}", &name));
+                let s = jsonpath::Selector::new(path)
+                    .unwrap_or_else(|_| panic!("Invalid jsonpath for {}", &name));
                 let v = s
-                    .find(&json)
+                    .find(json)
                     .flat_map(|v| match v {
                         v if v.is_string() => v.as_str().map(|v| v.to_string()),
                         v => Some(v.to_string()),
@@ -128,37 +128,37 @@ impl Request {
 
     fn request(&self, client: &Client, context: &RequestContext) -> anyhow::Result<RequestBuilder> {
         let base = match &self.method {
-            Method::GET => client.get(self.final_uri(context)),
-            Method::POST => client.post(self.final_uri(context)),
-            Method::PUT => client.put(self.final_uri(context)),
-            Method::DELETE => client.delete(self.final_uri(context)),
-            Method::PATCH => client.patch(self.final_uri(context)),
-            Method::HEAD => client.head(self.final_uri(context)),
+            Method::Get => client.get(self.final_uri(context)),
+            Method::Post => client.post(self.final_uri(context)),
+            Method::Put => client.put(self.final_uri(context)),
+            Method::Delete => client.delete(self.final_uri(context)),
+            Method::Patch => client.patch(self.final_uri(context)),
+            Method::Head => client.head(self.final_uri(context)),
         };
 
         let request = if let Some(query_params) = &self.query_params {
             let params: Vec<(String, String)> = query_params
-                .into_iter()
+                .iter()
                 .flat_map(|(k, vs)| match vs {
                     ParamValue::StringParam(v) => {
-                        vec![(k.to_string(), replace_variables(v, &context.variables))]
+                        vec![(k.to_string(), replace_variables(v, context.variables))]
                     }
                     ParamValue::NumberParam(v) => {
                         vec![(
                             k.to_string(),
-                            replace_variables(&v.to_string(), &context.variables),
+                            replace_variables(&v.to_string(), context.variables),
                         )]
                     }
                     ParamValue::BoolParam(v) => vec![(
                         k.to_string(),
-                        replace_variables(&v.to_string(), &context.variables),
+                        replace_variables(&v.to_string(), context.variables),
                     )],
                     ParamValue::ListParam(vs) => vs
-                        .into_iter()
+                        .iter()
                         .map(|v| {
                             (
                                 k.to_string(),
-                                replace_variables(&v.to_string(), &context.variables),
+                                replace_variables(&v.to_string(), context.variables),
                             )
                         })
                         .collect(),
@@ -178,7 +178,7 @@ impl Request {
                     reqwest::header::HeaderName::from_str(k)?,
                     reqwest::header::HeaderValue::from_str(&replace_variables(
                         v,
-                        &context.variables,
+                        context.variables,
                     ))?,
                 );
             }
@@ -189,7 +189,7 @@ impl Request {
 
         let request = if let Some(body) = &self.body {
             let body_string = String::from_utf8_lossy(&body.content()).to_string();
-            request.body(replace_variables(&body_string, &context.variables))
+            request.body(replace_variables(&body_string, context.variables))
         } else {
             request
         };
@@ -197,13 +197,13 @@ impl Request {
         let request = if let Some(authentication) = &self.authentication {
             match authentication {
                 Authentication::Basic { username, password } => request.basic_auth(
-                    replace_variables(&username, &context.variables),
+                    replace_variables(username, context.variables),
                     password
                         .clone()
-                        .map(|value| replace_variables(&value, &context.variables)),
+                        .map(|value| replace_variables(&value, context.variables)),
                 ),
                 Authentication::Bearer { token } => {
-                    request.bearer_auth(replace_variables(&token, &context.variables))
+                    request.bearer_auth(replace_variables(token, context.variables))
                 }
             }
         } else {

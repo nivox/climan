@@ -38,7 +38,7 @@ mod tests {
             .execute(&client, HashMap::new(), |_, _| (), |_, _, _| ())
             .await;
 
-        assert_eq!(result.is_ok(), true);
+        assert!(result.is_ok());
         Ok(())
     }
 }
