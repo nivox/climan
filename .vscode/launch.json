@@ -20,7 +20,8 @@
                 }
             },
             "args": [
-                "tests/test.yaml",
+                "workflow",
+                "tests/workflow.yaml",
                 "--variables",
                 "FOO=BAR"
             ],

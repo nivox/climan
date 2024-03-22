@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 
 use log::debug;
-use reqwest::Client;
+use reqwest::{Client, StatusCode};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
@@ -33,6 +33,7 @@ pub struct WorkflowResult {
 #[derive(Serialize, Deserialize, Debug, JsonSchema)]
 pub struct Workflow {
     pub name: String,
+    pub context: Option<String>,
     requests: Vec<Request>,
 }
 
@@ -46,13 +47,38 @@ impl Workflow {
     ) -> anyhow::Result<WorkflowResult> {
         debug!("executing workflow: {:?}", self.name);
 
+        let additional_variables: HashMap<String, Option<String>> = match &self.context {
+            Some(filename) => {
+                debug!("loading context from file: {}", filename);
+                match tokio::fs::read(filename).await {
+                    Ok(context_content) => serde_yaml::from_slice(&context_content)?,
+                    Err(e) => {
+                        return Err(anyhow::anyhow!(
+                            "failed to read context file {}: {}",
+                            filename,
+                            e
+                        ))
+                    }
+                }
+            }
+            None => HashMap::new(),
+        };
+
+        let variables = variables.into_iter().chain(additional_variables);
+
         let mut context: WorkflowContext = WorkflowContext::new(variables);
         let mut responses: Vec<Response> = Vec::new();
 
         for request in &self.requests {
             debug!("executing request: {:?}", request);
 
-            let response = request.execute(client, &context.variables, request_action, response_action).await?;
+            let response = request
+                .execute(client, &context.variables, request_action, response_action)
+                .await?;
+
+            if !StatusCode::from_u16(response.status_code)?.is_success() {
+                return Err(anyhow::anyhow!("request failed: {:?}", response));
+            }
 
             context.update(response.extracted_variables.clone());
             responses.push(response);
