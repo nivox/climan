@@ -3,8 +3,9 @@ use log::{error, LevelFilter};
 use schemars::schema_for;
 
 use std::borrow::Borrow;
+use std::path::PathBuf;
 use std::{collections::HashMap, env, fs::File, process::ExitCode};
-use termimad::minimad::{TextTemplate};
+use termimad::minimad::TextTemplate;
 use termimad::MadSkin;
 
 mod climan;
@@ -176,6 +177,10 @@ enum Command {
         #[arg(short, long)]
         variables: Option<Vec<String>>,
 
+        /// yaml files with additional variables
+        #[arg(short, long)]
+        files: Option<Vec<PathBuf>>,
+
         /// Include environment variables as initial variables
         #[arg(short, long)]
         env: bool,
@@ -267,6 +272,7 @@ async fn main() -> anyhow::Result<ExitCode> {
         Command::Workflow {
             path,
             variables,
+            files,
             env,
         } => {
             let content = std::fs::read_to_string(path)?;
@@ -281,7 +287,13 @@ async fn main() -> anyhow::Result<ExitCode> {
 
             skin.print_expander(workflow_expander);
             let result = workflow
-                .execute(&client, all_vars, &skinned_on_request, &skinned_on_response)
+                .execute(
+                    &client,
+                    all_vars,
+                    files,
+                    &skinned_on_request,
+                    &skinned_on_response,
+                )
                 .await;
 
             if result.is_err() {
