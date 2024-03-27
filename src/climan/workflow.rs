@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::{collections::HashMap, path::PathBuf};
 
 use log::debug;
 use reqwest::{Client, StatusCode};
@@ -33,7 +33,6 @@ pub struct WorkflowResult {
 #[derive(Serialize, Deserialize, Debug, JsonSchema)]
 pub struct Workflow {
     pub name: String,
-    pub context: Option<String>,
     requests: Vec<Request>,
 }
 
@@ -42,27 +41,30 @@ impl Workflow {
         &self,
         client: &Client,
         variables: T,
+        files: Option<Vec<PathBuf>>,
         request_action: &impl Fn(&Request, &RequestContext),
         response_action: &impl Fn(&Request, &RequestContext, &Response),
     ) -> anyhow::Result<WorkflowResult> {
         debug!("executing workflow: {:?}", self.name);
 
-        let additional_variables: HashMap<String, Option<String>> = match &self.context {
-            Some(filename) => {
-                debug!("loading context from file: {}", filename);
-                match tokio::fs::read(filename).await {
-                    Ok(context_content) => serde_yaml::from_slice(&context_content)?,
-                    Err(e) => {
-                        return Err(anyhow::anyhow!(
-                            "failed to read context file {}: {}",
-                            filename,
-                            e
-                        ))
-                    }
+        let mut additional_variables: HashMap<String, Option<String>> = HashMap::new();
+
+        for file in files.unwrap_or(vec![]) {
+            let filename = file.display().to_string();
+            debug!("loading context from file: {}", filename);
+            let file_variables: HashMap<String, Option<String>> = match tokio::fs::read(file).await
+            {
+                Ok(context_content) => serde_yaml::from_slice(&context_content)?,
+                Err(e) => {
+                    return Err(anyhow::anyhow!(
+                        "failed to read context file {}: {}",
+                        filename,
+                        e
+                    ))
                 }
-            }
-            None => HashMap::new(),
-        };
+            };
+            additional_variables.extend(file_variables);
+        }
 
         let variables = variables.into_iter().chain(additional_variables);
 

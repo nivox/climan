@@ -1,5 +1,6 @@
 use std::{borrow::Borrow, collections::HashMap, str::FromStr, time::Duration};
 
+use anyhow::anyhow;
 use minijinja::Environment;
 use reqwest::Client;
 use schemars::JsonSchema;
@@ -18,6 +19,7 @@ pub struct Request {
     pub body: Option<Body>,
     pub authentication: Option<Authentication>,
     pub extractors: Option<HashMap<String, String>>,
+    pub assertion: Option<String>,
 }
 
 pub struct RequestContext<'v> {
@@ -37,6 +39,30 @@ fn replace_variables(string_value: &str, variables: &HashMap<String, Option<Stri
             string_value.to_string()
         }
     }
+}
+
+fn evaluate_response_context(
+    string_value: &str,
+    variables: &HashMap<String, Option<String>>,
+    response: &Response,
+) -> anyhow::Result<bool> {
+    let env = Environment::new();
+    let expression = env
+        .compile_expression(string_value)
+        .map_err(|err| anyhow!("assertion expression can not be parsed: {err}"))?;
+
+    let mut all_variables = HashMap::<String, serde_json::Value>::new();
+    all_variables.insert("status".to_string(), response.status_code.into());
+
+    let mut variables_and_extracted: HashMap<String, Option<String>> = variables.clone();
+    variables_and_extracted.extend(response.extracted_variables.clone());
+
+    for (key, value) in variables_and_extracted {
+        all_variables.insert(key.clone(), value.clone().unwrap_or_default().into());
+    }
+
+    let result = expression.eval(all_variables)?;
+    Ok(result.is_true())
 }
 
 #[derive(Debug)]
@@ -110,6 +136,20 @@ impl Request {
         };
 
         response_action(self, &ctx, &response);
+
+        match &self.assertion {
+            Some(assertion) => {
+                if !evaluate_response_context(assertion, variables, &response)? {
+                    return Err(anyhow::anyhow!(
+                        "Assertion failed: {}\nVariables: {variables:?}\nResponse: {response:?}",
+                        assertion
+                    ));
+                } else {
+                    println!("assertion `{assertion}` passed")
+                }
+            }
+            None => {}
+        }
 
         Ok(response)
     }

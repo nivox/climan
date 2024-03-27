@@ -1,5 +1,4 @@
 name: TestWorkflow
-context: "tests/context.yaml"
 requests:
   - name: echo
     uri: https://postman-echo.com/post
@@ -36,6 +35,7 @@ requests:
       theArray: $.json.arrayValue
       theObject: $.json.objectValue.field1
       theArrayObject: "$.json.objectArrayValue[1].value"
+    assertion: status == 200 and theString == "this is a string, BAR"
   - name: echo2
     uri: https://postman-echo.com/get
     method: GET
