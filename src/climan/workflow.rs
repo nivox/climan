@@ -49,7 +49,7 @@ impl Workflow {
 
         let mut additional_variables: HashMap<String, Option<String>> = HashMap::new();
 
-        for file in files.unwrap_or(vec![]) {
+        for file in files.unwrap_or_default() {
             let filename = file.display().to_string();
             debug!("loading context from file: {}", filename);
             let file_variables: HashMap<String, Option<String>> = match tokio::fs::read(file).await

@@ -37,8 +37,12 @@ mod tests {
         let result = workflow
             .execute(&client, HashMap::new(), None, &|_, _| (), &|_, _, _| ())
             .await;
-
-        assert!(result.is_ok());
+        match result {
+            Ok(_) => (),
+            Err(error) => {
+                panic!("test workflow failed: {error:?}");
+            }
+        }
         Ok(())
     }
 }
