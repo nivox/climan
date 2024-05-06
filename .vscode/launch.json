@@ -20,9 +20,14 @@
                 }
             },
             "args": [
-                "tests/test.yaml",
+                "workflow",
+                "tests/workflow.yaml",
                 "--variables",
-                "FOO=BAR"
+                "FOO=BAR",
+                "-f",
+                "tests/context.yaml",
+                "-f",
+                "tests/context2.yaml"
             ],
             "cwd": "${workspaceFolder}"
         },

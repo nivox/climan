@@ -1,6 +1,8 @@
-use std::{collections::HashMap, str::FromStr, time::Duration, borrow::Borrow};
+use std::{borrow::Borrow, collections::HashMap, str::FromStr, time::Duration};
 
-use reqwest::{Client};
+use anyhow::anyhow;
+use minijinja::Environment;
+use reqwest::Client;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
@@ -17,6 +19,7 @@ pub struct Request {
     pub body: Option<Body>,
     pub authentication: Option<Authentication>,
     pub extractors: Option<HashMap<String, String>>,
+    pub assertion: Option<String>,
 }
 
 pub struct RequestContext<'v> {
@@ -29,14 +32,37 @@ pub struct RequestContext<'v> {
 }
 
 fn replace_variables(string_value: &str, variables: &HashMap<String, Option<String>>) -> String {
-    let result: String =
-        variables
-            .iter()
-            .fold(string_value.to_string(), |acc, (key, value)| match value {
-                Some(value) => acc.replace(&format!("${}", key), value),
-                None => acc,
-            });
-    result
+    match Environment::new().render_str(string_value, variables) {
+        Ok(value) => value,
+        Err(e) => {
+            log::error!("Error while replacing variables: {}", e);
+            string_value.to_string()
+        }
+    }
+}
+
+fn evaluate_response_context(
+    string_value: &str,
+    variables: &HashMap<String, Option<String>>,
+    response: &Response,
+) -> anyhow::Result<bool> {
+    let env = Environment::new();
+    let expression = env
+        .compile_expression(string_value)
+        .map_err(|err| anyhow!("assertion expression can not be parsed: {err}"))?;
+
+    let mut all_variables = HashMap::<String, serde_json::Value>::new();
+    all_variables.insert("status".to_string(), response.status_code.into());
+
+    let mut variables_and_extracted: HashMap<String, Option<String>> = variables.clone();
+    variables_and_extracted.extend(response.extracted_variables.clone());
+
+    for (key, value) in variables_and_extracted {
+        all_variables.insert(key.clone(), value.clone().unwrap_or_default().into());
+    }
+
+    let result = expression.eval(all_variables)?;
+    Ok(result.is_true())
 }
 
 #[derive(Debug)]
@@ -108,8 +134,22 @@ impl Request {
             body: body_string,
             extracted_variables,
         };
-        
+
         response_action(self, &ctx, &response);
+
+        match &self.assertion {
+            Some(assertion) => {
+                if !evaluate_response_context(assertion, variables, &response)? {
+                    return Err(anyhow::anyhow!(
+                        "Assertion failed: {}\nVariables: {variables:?}\nResponse: {response:?}",
+                        assertion
+                    ));
+                } else {
+                    println!("assertion `{assertion}` passed")
+                }
+            }
+            None => {}
+        }
 
         Ok(response)
     }
@@ -136,7 +176,11 @@ impl Request {
         }
     }
 
-    fn request<'v>(&'v self, client: &Client, variables: &'v HashMap<String, Option<String>>) -> anyhow::Result<(RequestContext<'v>, reqwest::Request)> {
+    fn request<'v>(
+        &'v self,
+        client: &Client,
+        variables: &'v HashMap<String, Option<String>>,
+    ) -> anyhow::Result<(RequestContext<'v>, reqwest::Request)> {
         let final_uri = replace_variables(&self.uri, variables);
 
         let mut request_builder = match &self.method {
@@ -156,23 +200,14 @@ impl Request {
                         vec![(k, replace_variables(v, variables))]
                     }
                     ParamValue::NumberParam(v) => {
-                        vec![(
-                            k,
-                            replace_variables(&v.to_string(), variables),
-                        )]
+                        vec![(k, replace_variables(&v.to_string(), variables))]
                     }
-                    ParamValue::BoolParam(v) => vec![(
-                        k,
-                        replace_variables(&v.to_string(), variables),
-                    )],
+                    ParamValue::BoolParam(v) => {
+                        vec![(k, replace_variables(&v.to_string(), variables))]
+                    }
                     ParamValue::ListParam(vs) => vs
                         .iter()
-                        .map(|v| {
-                            (
-                                k,
-                                replace_variables(&v.to_string(), variables),
-                            )
-                        })
+                        .map(|v| (k, replace_variables(&v.to_string(), variables)))
                         .collect(),
                 })
                 .collect();
@@ -180,28 +215,27 @@ impl Request {
             HashMap::from_iter(params)
         } else {
             HashMap::new()
-        }; 
+        };
         request_builder = request_builder.query(&final_query_params);
-        
+
         let final_headers = if let Some(headers) = &self.headers {
-            let header_it =  headers.iter().map(|(k, v)| {
-                (
-                    k,
-                    replace_variables(v, variables)
-                )
-            });
+            let header_it = headers
+                .iter()
+                .map(|(k, v)| (k, replace_variables(v, variables)));
 
             HashMap::from_iter(header_it)
         } else {
             HashMap::new()
         };
-        request_builder = request_builder.headers(reqwest::header::HeaderMap::from_iter(final_headers.iter().map(|(k, v)| {
-            (
-                reqwest::header::HeaderName::from_str(k).unwrap(),
-                reqwest::header::HeaderValue::from_str(v).unwrap()
-            )
-        })));
-        
+        request_builder = request_builder.headers(reqwest::header::HeaderMap::from_iter(
+            final_headers.iter().map(|(k, v)| {
+                (
+                    reqwest::header::HeaderName::from_str(k).unwrap(),
+                    reqwest::header::HeaderValue::from_str(v).unwrap(),
+                )
+            }),
+        ));
+
         let final_body = self.body.as_ref().map(|body| {
             let body_string = String::from_utf8_lossy(&body.content()).to_string();
             replace_variables(&body_string, variables)
@@ -213,19 +247,21 @@ impl Request {
 
         if let Some(authentication) = &self.authentication {
             match authentication {
-                Authentication::Basic { username, password } => 
+                Authentication::Basic { username, password } => {
                     request_builder = request_builder.basic_auth(
-                    replace_variables(username, variables),
-                    password
-                        .clone()
-                        .map(|value| replace_variables(&value, variables)),
-                ),
+                        replace_variables(username, variables),
+                        password
+                            .clone()
+                            .map(|value| replace_variables(&value, variables)),
+                    )
+                }
                 Authentication::Bearer { token } => {
-                    request_builder = request_builder.bearer_auth(replace_variables(token, variables))
+                    request_builder =
+                        request_builder.bearer_auth(replace_variables(token, variables))
                 }
             }
         };
-        
+
         let request_context: RequestContext<'v> = RequestContext {
             variables,
             uri: final_uri,
@@ -234,7 +270,6 @@ impl Request {
             headers: final_headers,
             body: final_body,
         };
-        
 
         Ok((request_context, request_builder.build()?))
     }
