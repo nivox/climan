@@ -12,6 +12,8 @@ mod climan;
 use climan::request::{Request, RequestContext, Response};
 use climan::workflow::Workflow;
 
+mod bruno;
+
 fn print_header_table<'v, T: IntoIterator<Item = (&'v str, &'v str)>>(
     skin: &MadSkin,
     header_map: T,
